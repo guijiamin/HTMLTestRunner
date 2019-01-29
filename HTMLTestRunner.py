@@ -99,7 +99,8 @@ import sys
 import time
 import unittest
 from xml.sax import saxutils
-
+reload(sys)
+sys.setdefaultencoding('utf-8')
 
 # ------------------------------------------------------------------------
 # The redirectors below are used to capture output during testing. Output
@@ -190,6 +191,7 @@ class Template_mixin(object):
 
     DEFAULT_TITLE = 'Unit Test Report'
     DEFAULT_DESCRIPTION = ''
+    DEFAULT_TESTER = 'QA'
 
     # ------------------------------------------------------------------------
     # HTML Template
@@ -207,14 +209,14 @@ class Template_mixin(object):
 <script language="javascript" type="text/javascript"><!--
 output_list = Array();
 
-/* level - 0:Summary; 1:Failed; 2:All */
+/* level - 0:Summary; 1:Pass; 2:Failed; 3:All */
 function showCase(level) {
     trs = document.getElementsByTagName("tr");
     for (var i = 0; i < trs.length; i++) {
         tr = trs[i];
         id = tr.id;
         if (id.substr(0,2) == 'ft') {
-            if (level < 1) {
+            if (level < 2) {
                 tr.className = 'hiddenRow';
             }
             else {
@@ -222,7 +224,7 @@ function showCase(level) {
             }
         }
         if (id.substr(0,2) == 'pt') {
-            if (level > 1) {
+            if (level == 1 || level == 3) {
                 tr.className = '';
             }
             else {
@@ -425,10 +427,11 @@ a.popup_link:hover {
     #
 
     REPORT_TMPL = """
-<p id='show_detail_line'>Show
-<a href='javascript:showCase(0)'>Summary</a>
-<a href='javascript:showCase(1)'>Failed</a>
-<a href='javascript:showCase(2)'>All</a>
+<p id='show_detail_line'>
+<a href='javascript:showCase(0)'>Abstract</a>
+<a href='javascript:showCase(1)'>Pass{%(Pass)s}</a>
+<a href='javascript:showCase(2)'>Failed{%(fail)s}</a>
+<a href='javascript:showCase(3)'>All{%(count)s}</a>
 </p>
 <table id='result_table'>
 <colgroup>
@@ -441,7 +444,7 @@ a.popup_link:hover {
 </colgroup>
 <tr id='header_row'>
     <td>Test Group/Test case</td>
-    <td>Count</td>
+    <td>Sum</td>
     <td>Pass</td>
     <td>Fail</td>
     <td>Error</td>
@@ -454,10 +457,10 @@ a.popup_link:hover {
     <td>%(Pass)s</td>
     <td>%(fail)s</td>
     <td>%(error)s</td>
-    <td>&nbsp;</td>
+    <td>%(pass_rate)s</td>
 </tr>
 </table>
-""" # variables: (test_list, count, Pass, fail, error)
+""" # variables: (test_list, count, Pass, fail, error, passrate)
 
     REPORT_CLASS_TMPL = r"""
 <tr class='%(style)s'>
@@ -477,17 +480,17 @@ a.popup_link:hover {
     <td colspan='5' align='center'>
 
     <!--css div popup start-->
-    <a class="popup_link" onfocus='this.blur();' href="javascript:showTestDetail('div_%(tid)s')" >
-        %(status)s</a>
+    <a class="popup_link" onfocus='this.blur();' href="javascript:showTestDetail('div_%(tid)s')"><span class='failCase'>
+        %(status)s</span></a>
 
     <div id='div_%(tid)s' class="popup_window">
         <div style='text-align: right; color:red;cursor:pointer'>
         <a onfocus='this.blur();' onclick="document.getElementById('div_%(tid)s').style.display = 'none' " >
            [x]</a>
         </div>
-        <pre>
+        <div>
         %(script)s
-        </pre>
+        </div>
     </div>
     <!--css div popup end-->
 
@@ -499,7 +502,7 @@ a.popup_link:hover {
     REPORT_TEST_NO_OUTPUT_TMPL = r"""
 <tr id='%(tid)s' class='%(Class)s'>
     <td class='%(style)s'><div class='testcase'>%(desc)s</div></td>
-    <td colspan='5' align='center'>%(status)s</td>
+    <td colspan='5' align='center' class='passCase'>%(status)s</td>
 </tr>
 """ # variables: (tid, Class, style, desc, status)
 
@@ -543,6 +546,7 @@ class _TestResult(TestResult):
         #   stack trace,
         # )
         self.result = []
+        self.pass_rate = float(0)
 
 
     def startTest(self, test):
@@ -618,7 +622,7 @@ class _TestResult(TestResult):
 class HTMLTestRunner(Template_mixin):
     """
     """
-    def __init__(self, stream=sys.stdout, verbosity=1, title=None, description=None):
+    def __init__(self, stream=sys.stdout, verbosity=1, title=None, description=None, tester=None):
         self.stream = stream
         self.verbosity = verbosity
         if title is None:
@@ -629,6 +633,10 @@ class HTMLTestRunner(Template_mixin):
             self.description = self.DEFAULT_DESCRIPTION
         else:
             self.description = description
+        if tester is None:
+            self.tester = self.DEFAULT_TESTER
+        else:
+            self.tester = tester
 
         self.startTime = datetime.datetime.now()
 
@@ -671,12 +679,15 @@ class HTMLTestRunner(Template_mixin):
         if result.error_count:   status.append('Error %s'   % result.error_count  )
         if status:
             status = ' '.join(status)
+            self.pass_rate = str("%.2f%%" % (float(result.success_count) / float(result.success_count + result.failure_count + result.error_count) * 100))
         else:
             status = 'none'
         return [
-            ('Start Time', startTime),
+            ('Tester', self.tester),
+            ('Start Time', str(self.startTime)),
+            ('Stop Time', str(self.stopTime)),
             ('Duration', duration),
-            ('Status', status),
+            ('Status', self.pass_rate),
         ]
 
 
@@ -714,6 +725,7 @@ class HTMLTestRunner(Template_mixin):
             title = saxutils.escape(self.title),
             parameters = ''.join(a_lines),
             description = saxutils.escape(self.description),
+            tester = saxutils.escape(self.tester),
         )
         return heading
 
@@ -757,6 +769,7 @@ class HTMLTestRunner(Template_mixin):
             Pass = str(result.success_count),
             fail = str(result.failure_count),
             error = str(result.error_count),
+            pass_rate = self.pass_rate,
         )
         return report
 
@@ -792,7 +805,7 @@ class HTMLTestRunner(Template_mixin):
         row = tmpl % dict(
             tid = tid,
             Class = (n == 0 and 'hiddenRow' or 'none'),
-            style = n == 2 and 'errorCase' or (n == 1 and 'failCase' or 'none'),
+            style = n == 2 and 'errorCase' or (n == 1 and 'failCase' or 'passCase'),
             desc = desc,
             script = script,
             status = self.STATUS[n],
